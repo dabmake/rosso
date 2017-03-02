@@ -54,4 +54,22 @@
   #define MOTOR2_IN_B 8
 #endif
 
+#define MAX_X 0.5 // m/s - max linear velocity
+#define MAX_Z 0.7 // rad/s - max angular velocity
+
+//TUNE THESE CONSTANTS ACCORDINGLY
+#define K_Px 0.6
+#define K_Ix 0.3
+#define K_Dx 0.5
+
+//TUNE THESE CONSTANTS ACCORDINGLY
+#define K_Pz 0.6
+#define K_Iz 0.3
+#define K_Dz 0.5
+
+// THIS IS A SAMPLE DATA, REPLACE WITH EXTERNAL ODOM VALUES
+#define EXTERNAL_ODOM_X 0.3
+// THIS IS A SAMPLE DATA, REPLACE WITH EXTERNAL ODOM VALUES
+#define EXTERNAL_ODOM_Z 0.5
+
 #endif

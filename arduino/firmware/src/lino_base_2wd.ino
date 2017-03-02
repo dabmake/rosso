@@ -152,13 +152,35 @@ void commandCallback(const geometry_msgs::Twist& cmd_msg)
 
 void moveBase()
 {
-  Kinematics::output req_rpm;
+  Kinematics::output req_pwm;
   //get the required rpm for each motor based on required velocities
-  req_rpm = kinematics.getRPM(g_req_linear_vel_x, 0.0, g_req_angular_vel_z);
+  req_pwm = kinematics.getPWM(g_req_linear_vel_x, 0.0, g_req_angular_vel_z);
+  //throw the pwm values to the motor driver
+  motor1.spin(req_pwm.motor1);
+  motor2.spin(req_pwm.motor2);
 
-  //the PWM value to be sent to the driver is the ratio of the req_rpm vs analog resolution (8bit)
-  motor1.spin((motor1.rpm / MAX_RPM) * (pow(2, PWM_BITS)-1));
-  motor2.spin((motor2.rpm / MAX_RPM) * (pow(2, PWM_BITS)-1));
+  /*
+  //PID control can be done in this setup on a robot level by:
+  //create these objects before void_setup();
+  PID x_pid(-MAX_X, MAX_X, K_Px, K_Ix, K_Dx);
+  PID z_pid(-MAX_Z, MAX_Z, K_Pz, K_Iz, K_Dz);
+
+  //These are sample data, replace the values with your external odom velocities
+  double ex_linear_vel = EXTERNAL_ODOM_X;
+  double ex_angular_vel = EXTERNAL_ODOM_Z;
+
+  //calculate required velocites using PID - Twist velocities vs external odometry velocities
+  double pid_linear_vel = x_pid.compute(g_req_linear_vel_x, ex_linear_vel);
+  double pid_angular_vel = z_pid.compute(g_req_angular_vel_z, ex_angular_vel);
+
+  Kinematics::output req_pwm;
+  //calculate pwm values for the motor based on calculated velocities using PID
+  req_pwm =  kinematics.getPWM(pid_linear_vel, 0.0, pid_angular_vel);
+
+  //throw the pwm values to the motor driver
+  motor1.spin(req_pwm.motor1);
+  motor2.spin(req_pwm.motor2);
+  */
 }
 
 void stopBase()
