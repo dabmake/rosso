@@ -52,19 +52,13 @@
 
 #include <Wire.h>
 
-#include "imu_configuration.h"
 #include "lino_base_config.h"
-#include "Encoder.h"
 #include "Motor.h"
 #include "Kinematics.h"
 #include "PID.h"
 
-#define ENCODER_OPTIMIZE_INTERRUPTS
-
-#define IMU_PUBLISH_RATE 10 //hz
-#define VEL_PUBLISH_RATE 10 //hz
 #define COMMAND_RATE 10 //hz
-#define DEBUG_RATE 5
+
 
 #ifdef L298_DRIVER
   //left side motors
@@ -81,13 +75,7 @@
 #endif
 
 //COUNTS_PER_REV = 0 if no encoder
-int Motor::counts_per_rev_ = COUNTS_PER_REV;
-
-//left side encoders
-Encoder motor1_encoder(MOTOR1_ENCODER_A,MOTOR1_ENCODER_B); //front
-
-//right side encodersa
-Encoder motor2_encoder(MOTOR2_ENCODER_A,MOTOR2_ENCODER_B); //front
+int Motor::counts_per_rev_ = 0.0;
 
 Kinematics kinematics(MAX_RPM, WHEEL_DIAMETER, BASE_WIDTH, PWM_BITS);
 
@@ -99,13 +87,6 @@ double g_req_linear_vel_x = 0;
 
 unsigned long g_prev_command_time = 0;
 unsigned long g_prev_control_time = 0;
-unsigned long g_publish_vel_time = 0;
-unsigned long g_prev_imu_time = 0;
-unsigned long g_prev_debug_time = 0;
-
-bool g_is_first = true;
-
-char g_buffer[50];
 
 //callback function prototypes
 void commandCallback(const geometry_msgs::Twist& cmd_msg);
@@ -116,20 +97,12 @@ ros::NodeHandle nh;
 ros::Subscriber<geometry_msgs::Twist> cmd_sub("cmd_vel", commandCallback);
 ros::Subscriber<lino_msgs::PID> pid_sub("pid", PIDCallback);
 
-ros_arduino_msgs::RawImu raw_imu_msg;
-ros::Publisher raw_imu_pub("raw_imu", &raw_imu_msg);
-
-lino_msgs::Velocities raw_vel_msg;
-ros::Publisher raw_vel_pub("raw_vel", &raw_vel_msg);
-
 void setup()
 {
   nh.initNode();
   nh.getHardware()->setBaud(57600);
   nh.subscribe(pid_sub);
   nh.subscribe(cmd_sub);
-  nh.advertise(raw_vel_pub);
-  nh.advertise(raw_imu_pub);
 
   while (!nh.connected())
   {
@@ -137,7 +110,6 @@ void setup()
   }
   nh.loginfo("LINOBASE CONNECTED");
 
-  Wire.begin();
   delay(5);
 }
 
@@ -156,38 +128,6 @@ void loop()
     stopBase();
   }
 
-  //this block publishes velocity based on defined rate
-  if ((millis() - g_publish_vel_time) >= (1000 / VEL_PUBLISH_RATE))
-  {
-    publishVelocities();
-    g_publish_vel_time = millis();
-  }
-
-  //this block publishes the IMU data based on defined rate
-  if ((millis() - g_prev_imu_time) >= (1000 / IMU_PUBLISH_RATE))
-  {
-    //sanity check if the IMU exits
-    if (g_is_first)
-    {
-      checkIMU();
-    }
-    else
-    {
-      //publish the IMU data
-      publishIMU();
-    }
-    g_prev_imu_time = millis();
-  }
-
-  //this block displays the encoder readings. change DEBUG to 0 if you don't want to display
-  if(DEBUG)
-  {
-    if ((millis() - g_prev_debug_time) >= (1000 / DEBUG_RATE))
-    {
-      printDebug();
-      g_prev_debug_time = millis();
-    }
-  }
   //call all the callbacks waiting to be called
   nh.spinOnce();
 }
@@ -216,99 +156,13 @@ void moveBase()
   //get the required rpm for each motor based on required velocities
   req_rpm = kinematics.getRPM(g_req_linear_vel_x, 0.0, g_req_angular_vel_z);
 
-  //the required rpm is capped at -/+ MAX_RPM to prevent the PID from having too much error
-  //the PWM value sent to the motor driver is the calculated PID based on required RPM vs measured RPM
-  motor1.spin(motor1_pid.compute(constrain(req_rpm.motor1, -MAX_RPM, MAX_RPM), motor1.rpm));
-  motor2.spin(motor2_pid.compute(constrain(req_rpm.motor2, -MAX_RPM, MAX_RPM), motor2.rpm));
+  //the PWM value to be sent to the driver is the ratio of the req_rpm vs analog resolution (8bit)
+  motor1.spin((motor1.rpm / MAX_RPM) * (pow(2, PWM_BITS)-1));
+  motor2.spin((motor2.rpm / MAX_RPM) * (pow(2, PWM_BITS)-1));
 }
 
 void stopBase()
 {
   g_req_linear_vel_x = 0.0;
   g_req_angular_vel_z = 0.0;
-}
-
-void publishVelocities()
-{
-  //update the current speed of each motor based on encoder's count
-  motor1.updateSpeed(motor1_encoder.read());
-  motor2.updateSpeed(motor2_encoder.read());
-
-  Kinematics::velocities vel;
-  vel = kinematics.getVelocities(motor1.rpm, motor2.rpm);
-
-  //fill in the object
-  raw_vel_msg.linear_x = vel.linear_x;
-  raw_vel_msg.linear_y = 0.0;
-  raw_vel_msg.angular_z = vel.angular_z;
-
-  //publish raw_vel_msg object to ROS
-  raw_vel_pub.publish(&raw_vel_msg);
-}
-
-void checkIMU()
-{
-  //this function checks if IMU is present
-  raw_imu_msg.accelerometer = checkAccelerometer();
-  raw_imu_msg.gyroscope = checkGyroscope();
-  raw_imu_msg.magnetometer = checkMagnetometer();
-
-  if (!raw_imu_msg.accelerometer)
-  {
-    nh.logerror("Accelerometer NOT FOUND!");
-  }
-
-  if (!raw_imu_msg.gyroscope)
-  {
-    nh.logerror("Gyroscope NOT FOUND!");
-  }
-
-  if (!raw_imu_msg.magnetometer)
-  {
-    nh.logerror("Magnetometer NOT FOUND!");
-  }
-
-  g_is_first = false;
-}
-
-void publishIMU()
-{
-  if (raw_imu_msg.accelerometer && raw_imu_msg.gyroscope && raw_imu_msg.magnetometer)
-  {
-    //this function publishes raw IMU reading
-    raw_imu_msg.header.stamp = nh.now();
-    raw_imu_msg.header.frame_id = "imu_link";
-
-    //measure accelerometer
-    if (raw_imu_msg.accelerometer)
-    {
-      measureAcceleration();
-      raw_imu_msg.raw_linear_acceleration = raw_acceleration;
-    }
-
-    //measure gyroscope
-    if (raw_imu_msg.gyroscope)
-    {
-      measureGyroscope();
-      raw_imu_msg.raw_angular_velocity = raw_rotation;
-    }
-
-    //measure magnetometer
-    if (raw_imu_msg.magnetometer)
-    {
-      measureMagnetometer();
-      raw_imu_msg.raw_magnetic_field = raw_magnetic_field;
-    }
-
-    //publish raw_imu_msg object to ROS
-    raw_imu_pub.publish(&raw_imu_msg);
-  }
-}
-
-void printDebug()
-{
-  sprintf (g_buffer, "Encoder Left: %ld", motor1_encoder.read());
-  nh.loginfo(g_buffer);
-  sprintf (g_buffer, "Encoder Right: %ld", motor2_encoder.read());
-  nh.loginfo(g_buffer);
 }
